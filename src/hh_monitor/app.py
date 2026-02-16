@@ -4,11 +4,11 @@ import copy
 import html
 import json
 import logging
-import os
 import re
 import sys
 import traceback
 import webbrowser
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,8 +22,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGraphicsOpacityEffect,
     QGroupBox,
     QHBoxLayout,
@@ -33,7 +33,9 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -53,8 +55,9 @@ from .storage import get_run_seen_rows, get_vacancy_by_id
 HELP_TEXT = """HH Monitor — короткая инструкция
 
 1) Первый запуск
-- Откройте папку проекта
-- Дважды кликните HH Monitor.app (macOS) или HHLook.exe (Windows)
+- Откройте папку приложения
+- Запуск на macOS: двойной клик по HH Monitor.app
+- Запуск на Windows: двойной клик по HHLook.exe
 - Если macOS блокирует запуск:
   xattr -dr com.apple.quarantine "/path/to/HH Monitor.app"
 
@@ -257,18 +260,47 @@ class MainWindow(QMainWindow):
         self.active_deep_target_ids: list[str] = []
         self.deep_in_progress = False
         self.active_run_id: int | None = None
+        self.progress_mode = "idle"
+        self.progress_total = 1
+        self.progress_current = 0
+        self.progress_seen_units: set[str] = set()
+        self.log_char_queue: deque[str] = deque()
+        self.log_active_line = ""
+        self.log_active_pos = 0
 
         self.current_worker: Worker | None = None
         self.partial_refresh_timer = QTimer(self)
         self.partial_refresh_timer.setInterval(900)
         self.partial_refresh_timer.timeout.connect(self._poll_partial_fast_results)
+        self.log_char_timer = QTimer(self)
+        self.log_char_timer.setInterval(8)
+        self.log_char_timer.timeout.connect(self._flush_log_char)
         self.last_run_mode = "fast"
 
         self.setWindowTitle("hhороший сканер")
-        self.resize(1560, 1060)
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            max_width = max(640, available.width() - 20)
+            max_height = max(480, available.height() - 20)
+            min_width = min(980, max_width)
+            min_height = min(820, max_height)
+
+            width = min(1560, int(available.width() * 0.96), max_width)
+            height = min(1060, int(available.height() * 0.94), max_height)
+            width = max(min_width, width)
+            height = max(min_height, height)
+
+            self.setMinimumSize(min_width, min_height)
+            self.resize(width, height)
+        else:
+            self.setMinimumSize(980, 640)
+            self.resize(1360, 900)
 
         self._build_ui()
+        self._init_agent_panel_effects()
         self._apply_styles()
+        self._configure_log_window()
         self._load_from_settings()
         self._load_hidden_state()
         self._load_applied_state()
@@ -278,6 +310,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         central = QWidget(self)
+        central.setObjectName("AppRoot")
         self.setCentralWidget(central)
 
         root = QVBoxLayout()
@@ -354,42 +387,76 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(side_title)
         sidebar_layout.addWidget(side_hint)
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignLeft)
-        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-
         self.positions_input = QPlainTextEdit()
         self.positions_input.setPlaceholderText(
             "директор по трансформации\nchief of staff\nисполнительный директор\nceo"
         )
-        self.positions_input.setFixedHeight(92)
+        self.positions_input.setFixedHeight(96)
         self.positions_input.textChanged.connect(self._update_query_preview)
 
         self.blockers_input = QPlainTextEdit()
         self.blockers_input.setPlaceholderText("стажер\njunior\nбез опыта\nassistant")
-        self.blockers_input.setFixedHeight(92)
+        self.blockers_input.setFixedHeight(140)
         self.blockers_input.textChanged.connect(self._update_query_preview)
 
         self.pages_spin = QSpinBox()
         self.pages_spin.setRange(1, 100)
+        self.pages_spin.setFixedHeight(38)
 
         self.age_spin = QSpinBox()
         self.age_spin.setRange(1, 365)
+        self.age_spin.setFixedHeight(38)
 
         self.min_salary_input = QLineEdit()
         self.min_salary_input.setPlaceholderText("optional")
+        self.min_salary_input.setFixedHeight(38)
 
-        form.addRow("Целевые позиции (/)", self.positions_input)
-        form.addRow("Блокеры (/)", self.blockers_input)
-        form.addRow("Макс. страниц", self.pages_spin)
-        form.addRow("Возраст вакансий", self.age_spin)
-        form.addRow("Мин. зарплата", self.min_salary_input)
-        sidebar_layout.addLayout(form)
+        positions_label = QLabel("Целевые позиции (/)")
+        positions_label.setObjectName("FieldLabel")
+        blockers_label = QLabel("Блокеры (/)")
+        blockers_label.setObjectName("FieldLabel")
+        pages_label = QLabel("Макс. страниц")
+        pages_label.setObjectName("FieldLabel")
+        age_label = QLabel("Возраст вакансий")
+        age_label.setObjectName("FieldLabel")
+        salary_label = QLabel("Мин. зарплата")
+        salary_label.setObjectName("FieldLabel")
+        for lbl in [positions_label, blockers_label, pages_label, age_label, salary_label]:
+            lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
-        self.query_preview = QLabel()
-        self.query_preview.setWordWrap(True)
-        self.query_preview.setObjectName("QueryPreview")
-        sidebar_layout.addWidget(self.query_preview)
+        sidebar_fields = QVBoxLayout()
+        sidebar_fields.setContentsMargins(0, 0, 0, 0)
+        sidebar_fields.setSpacing(6)
+
+        def _add_labeled_field(label_widget: QLabel, field_widget: QWidget) -> None:
+            sidebar_fields.addWidget(label_widget)
+            sidebar_fields.addWidget(field_widget)
+            sidebar_fields.addSpacing(4)
+
+        _add_labeled_field(positions_label, self.positions_input)
+        _add_labeled_field(blockers_label, self.blockers_input)
+        _add_labeled_field(pages_label, self.pages_spin)
+        _add_labeled_field(age_label, self.age_spin)
+        _add_labeled_field(salary_label, self.min_salary_input)
+        sidebar_layout.addLayout(sidebar_fields)
+
+        progress_label = QLabel("Прогресс агента")
+        progress_label.setObjectName("FieldLabel")
+        sidebar_layout.addWidget(progress_label)
+
+        self.agent_progress = QProgressBar()
+        self.agent_progress.setObjectName("AgentProgress")
+        self.agent_progress.setRange(0, 100)
+        self.agent_progress.setValue(0)
+        self.agent_progress.setTextVisible(True)
+        self.agent_progress.setFormat("%p%")
+        self.agent_progress.setFixedHeight(22)
+        sidebar_layout.addWidget(self.agent_progress)
+
+        self.progress_note = QLabel("Ожидание запуска")
+        self.progress_note.setObjectName("PanelHint")
+        self.progress_note.setWordWrap(True)
+        sidebar_layout.addWidget(self.progress_note)
 
         self.fast_run_btn = QPushButton("Запустить поиск")
         self.fast_run_btn.setObjectName("FastButton")
@@ -401,7 +468,9 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.fast_run_btn)
         sidebar_layout.addStretch(1)
 
-        body.addWidget(sidebar, 0)
+        sidebar.setFixedWidth(350)
+        sidebar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
+        body.addWidget(sidebar, 0, Qt.AlignTop)
 
         content_col = QVBoxLayout()
         content_col.setSpacing(10)
@@ -537,13 +606,19 @@ class MainWindow(QMainWindow):
         self.details_group.setLayout(details_layout)
         bottom_row.addWidget(self.details_group, 2)
 
-        logs_group = QGroupBox("Логи")
+        self.logs_group = QGroupBox("Логи")
+        self.logs_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         logs_layout = QVBoxLayout()
+        logs_layout.setContentsMargins(8, 6, 8, 6)
+        logs_layout.setSpacing(6)
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
+        self.log_text.setObjectName("LogTerminal")
+        self.log_text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.log_text.document().setMaximumBlockCount(1000)
         logs_layout.addWidget(self.log_text)
-        logs_group.setLayout(logs_layout)
-        root.addWidget(logs_group)
+        self.logs_group.setLayout(logs_layout)
+        root.addWidget(self.logs_group)
 
         self.status_label = QLabel("Готово")
         self.status_label.setObjectName("PanelHint")
@@ -553,10 +628,15 @@ class MainWindow(QMainWindow):
     def _apply_styles(self) -> None:
         self.setStyleSheet("""
             QWidget {
-                background: #0B0B0E;
                 color: #E7E7EA;
                 font-family: 'SF Pro (SFNS)', 'SF Pro Text', '.SF NS Text';
                 font-size: 12px;
+            }
+            QMainWindow, QWidget#AppRoot {
+                background: #0B0B0E;
+            }
+            QLabel {
+                background: transparent;
             }
             QFrame#HeaderBar {
                 background: #121216;
@@ -591,21 +671,106 @@ class MainWindow(QMainWindow):
                 min-width: 330px;
                 max-width: 350px;
             }
-            QLabel#PanelTitle { font-size: 34px; font-weight: 700; color: #FFFFFF; }
+            QLabel#PanelTitle { font-size: 30px; font-weight: 700; color: #FFFFFF; }
             QLabel#PanelHint { color: #7C7C82; }
-            QLabel#QueryPreview {
-                color: #B2B2B8;
-                background: #0F0F12;
-                border: 1px solid #2A2A2E;
-                border-radius: 8px;
-                padding: 8px;
+            QLabel#FieldLabel {
+                color: #D9D9DE;
+                font-size: 12px;
+                font-weight: 700;
             }
-            QLineEdit, QSpinBox, QPlainTextEdit, QTextBrowser {
+            QLineEdit, QPlainTextEdit, QTextBrowser {
                 background: #0F0F12;
                 border: 1px solid #2A2A2E;
                 border-radius: 8px;
                 padding: 6px;
                 color: #D9D9DE;
+            }
+            QProgressBar#AgentProgress {
+                background: #0F1117;
+                border: 1px solid #2B3D53;
+                border-radius: 10px;
+                color: #C8D9EC;
+                text-align: center;
+                font-weight: 700;
+                padding: 1px;
+            }
+            QProgressBar#AgentProgress::chunk {
+                border-radius: 9px;
+                background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #4CA9EA,
+                    stop:0.5 #61CCF5,
+                    stop:1 #2E79C9
+                );
+            }
+            QSpinBox {
+                background: #0F0F12;
+                border: 1px solid #2A2A2E;
+                border-radius: 8px;
+                color: #D9D9DE;
+                padding-left: 8px;
+                padding-right: 24px;
+                min-height: 30px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                subcontrol-origin: border;
+                width: 18px;
+                background: #14161C;
+                border-left: 1px solid #2A2A2E;
+            }
+            QSpinBox::up-button {
+                subcontrol-position: top right;
+                border-top-right-radius: 8px;
+            }
+            QSpinBox::down-button {
+                subcontrol-position: bottom right;
+                border-bottom-right-radius: 8px;
+            }
+            QSpinBox::up-arrow, QSpinBox::down-arrow {
+                width: 8px;
+                height: 8px;
+            }
+            QScrollBar:vertical {
+                background: #11141C;
+                width: 8px;
+                margin: 2px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #355273CC;
+                min-height: 26px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #5886B8;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                background: transparent;
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+            QScrollBar:horizontal {
+                background: #11141C;
+                height: 8px;
+                margin: 2px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #355273CC;
+                min-width: 26px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: #5886B8;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                background: transparent;
+                width: 0px;
+            }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: transparent;
             }
             QGroupBox {
                 background: #141417;
@@ -614,6 +779,9 @@ class MainWindow(QMainWindow):
                 margin-top: 0px;
                 padding-top: 20px;
                 font-weight: 700;
+            }
+            QGroupBox[agentActive="true"] {
+                border: 1px solid #385E86;
             }
             QGroupBox::title {
                 subcontrol-origin: padding;
@@ -665,6 +833,11 @@ class MainWindow(QMainWindow):
                 border-color: #2F4761;
                 color: #D8E8FA;
                 padding: 5px 10px;
+            }
+            QPushButton#CollectButton[deepRunning="true"] {
+                background: #223548;
+                border-color: #5A90C6;
+                color: #EAF5FF;
             }
             QPushButton#CollectButton:pressed {
                 background: #28435F;
@@ -728,11 +901,29 @@ class MainWindow(QMainWindow):
                 color: #D0D0D4;
                 line-height: 1.25;
             }
+            QPlainTextEdit#LogTerminal {
+                background: #060D06;
+                border: 1px solid #163016;
+                border-radius: 8px;
+                color: #72FF78;
+                font-family: 'Menlo', 'Monaco', 'SF Mono';
+                font-size: 12px;
+                selection-background-color: #285128;
+                selection-color: #CCFFD0;
+            }
             QTextBrowser a {
                 color: #B7D3F3;
                 text-decoration: none;
             }
             """)
+
+    def _configure_log_window(self) -> None:
+        line_height = QFontMetrics(self.log_text.font()).lineSpacing()
+        viewport_height = line_height * 3 + 10
+        self.log_text.setFixedHeight(viewport_height)
+        group_height = viewport_height + 58
+        self.logs_group.setMinimumHeight(group_height)
+        self.logs_group.setMaximumHeight(group_height)
 
     def _split_slash_terms(self, value: str) -> list[str]:
         normalized = value.replace("\n", "/").replace(",", "/")
@@ -740,18 +931,13 @@ class MainWindow(QMainWindow):
         return [term for term in terms if term]
 
     def _compose_query_text(self, positions: list[str], blockers: list[str]) -> str:
+        # Blockers are applied locally to parsed cards; injecting them into HH text
+        # query can collapse/shift relevance unexpectedly.
+        _ = blockers
         parts: list[str] = []
         for term in positions:
             parts.append(f'("{term}")' if " " in term else term)
-        query = " OR ".join(parts)
-
-        blocker_parts: list[str] = []
-        for blocker in blockers:
-            blocker_parts.append(f'-"{blocker}"' if " " in blocker else f"-{blocker}")
-
-        if blocker_parts:
-            query = f"{query} {' '.join(blocker_parts)}"
-        return query.strip()
+        return " OR ".join(parts).strip()
 
     def _build_query_text(
         self,
@@ -768,11 +954,15 @@ class MainWindow(QMainWindow):
 
     def _update_query_preview(self) -> None:
         try:
-            query_text, _, _ = self._build_query_text()
+            self._build_query_text()
         except ValueError:
-            self.query_preview.setText("Собранный query: (заполните целевые позиции)")
+            if self.progress_mode == "idle":
+                self.agent_progress.setValue(0)
+                self.progress_note.setText("Заполните целевые позиции для запуска поиска.")
             return
-        self.query_preview.setText(f"Собранный query: {query_text}")
+        if self.progress_mode == "idle":
+            self.agent_progress.setValue(0)
+            self.progress_note.setText("Настройки готовы. Можно запускать поиск.")
 
     def _load_from_settings(self) -> None:
         settings = self.ctx.settings
@@ -849,9 +1039,71 @@ class MainWindow(QMainWindow):
             self.help_btn,
             self.save_settings_btn,
             self.fast_run_btn,
-            self.collect_btn,
         ]:
             btn.setDisabled(busy)
+        # Keep deep-dive button visible during deep run; repeat clicks are blocked
+        # by deep_in_progress guard in handler.
+        self.collect_btn.setDisabled(busy and not self.deep_in_progress)
+
+    def _set_agent_progress(self, value: int, note: str | None = None) -> None:
+        clamped = max(0, min(100, int(value)))
+        self.agent_progress.setValue(clamped)
+        if note is not None:
+            self.progress_note.setText(note)
+
+    def _start_progress_tracking(self, mode: str, deep_target_ids: list[str] | None = None) -> None:
+        self.progress_mode = mode
+        self.progress_seen_units.clear()
+        self.progress_current = 0
+        if mode == "deep":
+            total = len(deep_target_ids or [])
+            self.progress_total = max(1, total)
+            self._set_agent_progress(0, f"deep-dive: 0/{total}")
+            return
+        self.progress_total = max(1, int(self.ctx.settings.search.max_pages))
+        self._set_agent_progress(0, f"Поиск вакансий: 0/{self.progress_total}")
+
+    def _complete_progress_tracking(self, note: str) -> None:
+        self.progress_current = self.progress_total
+        self._set_agent_progress(100, note)
+        self.progress_mode = "idle"
+        self.progress_seen_units.clear()
+
+    def _update_progress_from_worker_message(self, message: str) -> None:
+        if self.progress_mode == "fast":
+            page_match = re.search(r"Loading page\s+(\d+)\s*/\s*(\d+)", message)
+            if page_match:
+                current_page = int(page_match.group(1))
+                total_pages = max(1, int(page_match.group(2)))
+                self.progress_total = total_pages
+                self.progress_current = min(total_pages, max(self.progress_current, current_page))
+                percent = int((self.progress_current / self.progress_total) * 100)
+                self._set_agent_progress(
+                    percent,
+                    f"Поиск вакансий: {self.progress_current}/{self.progress_total}",
+                )
+            return
+
+        if self.progress_mode == "deep":
+            lower = message.lower()
+            if (
+                "loading details for queued vacancy" not in lower
+                and "loading details for vacancy" not in lower
+                and "queued vacancy=" not in lower
+                and "vacancy=" not in lower
+            ):
+                return
+            vacancy_match = re.search(r"(\d{6,})", message)
+            unit_key = vacancy_match.group(1) if vacancy_match else f"msg:{message}"
+            if unit_key in self.progress_seen_units:
+                return
+            self.progress_seen_units.add(unit_key)
+            self.progress_current = min(self.progress_total, self.progress_current + 1)
+            percent = int((self.progress_current / self.progress_total) * 100)
+            self._set_agent_progress(
+                percent,
+                f"deep-dive: {self.progress_current}/{self.progress_total}",
+            )
 
     def _on_worker_progress(self, message: str) -> None:
         marker = "__RUN_ID__:"
@@ -865,6 +1117,7 @@ class MainWindow(QMainWindow):
             if self.last_run_mode == "fast" and not self.partial_refresh_timer.isActive():
                 self.partial_refresh_timer.start()
             return
+        self._update_progress_from_worker_message(message)
         self._append_log(message)
 
     def _poll_partial_fast_results(self) -> None:
@@ -886,15 +1139,93 @@ class MainWindow(QMainWindow):
 
     def _set_deep_running_ui(self, running: bool) -> None:
         self.deep_in_progress = running
+        self.collect_btn.setProperty("deepRunning", running)
+        self.collect_btn.style().unpolish(self.collect_btn)
+        self.collect_btn.style().polish(self.collect_btn)
+        self.collect_btn.update()
+        self.collect_btn.setVisible(True)
+        self.collect_btn.setEnabled(True)
         if running:
             self.collect_btn.setText("⏳ deep-dive...")
             self.collect_btn_pulse.stop()
-            self.collect_btn_pulse.start()
+            self.collect_btn_opacity.setOpacity(1.0)
+            self._start_panel_pulse("deep")
             self.status_label.setText("deep-dive выполняется...")
         else:
             self.collect_btn_pulse.stop()
             self.collect_btn_opacity.setOpacity(1.0)
             self.collect_btn.setText("↓ deep-dive")
+            self._stop_panel_pulse("deep")
+
+    def _init_agent_panel_effects(self) -> None:
+        self.found_group_glow = QGraphicsDropShadowEffect(self.found_group)
+        self.found_group_glow.setOffset(0, 0)
+        self.found_group_glow.setBlurRadius(0.0)
+        self.found_group_glow.setColor(QColor(0, 0, 0, 0))
+        self.found_group.setGraphicsEffect(self.found_group_glow)
+
+        self.deep_group_glow = QGraphicsDropShadowEffect(self.deep_group)
+        self.deep_group_glow.setOffset(0, 0)
+        self.deep_group_glow.setBlurRadius(0.0)
+        self.deep_group_glow.setColor(QColor(0, 0, 0, 0))
+        self.deep_group.setGraphicsEffect(self.deep_group_glow)
+
+        self.found_group_pulse = QPropertyAnimation(self.found_group_glow, b"blurRadius", self)
+        self.found_group_pulse.setDuration(1250)
+        self.found_group_pulse.setStartValue(4.0)
+        self.found_group_pulse.setKeyValueAt(0.5, 23.0)
+        self.found_group_pulse.setEndValue(4.0)
+        self.found_group_pulse.setEasingCurve(QEasingCurve.InOutSine)
+        self.found_group_pulse.setLoopCount(-1)
+
+        self.deep_group_pulse = QPropertyAnimation(self.deep_group_glow, b"blurRadius", self)
+        self.deep_group_pulse.setDuration(1250)
+        self.deep_group_pulse.setStartValue(4.0)
+        self.deep_group_pulse.setKeyValueAt(0.5, 23.0)
+        self.deep_group_pulse.setEndValue(4.0)
+        self.deep_group_pulse.setEasingCurve(QEasingCurve.InOutSine)
+        self.deep_group_pulse.setLoopCount(-1)
+
+    def _set_group_agent_active(self, group: QGroupBox, active: bool) -> None:
+        group.setProperty("agentActive", active)
+        group.style().unpolish(group)
+        group.style().polish(group)
+        group.update()
+
+    def _start_panel_pulse(self, panel: str) -> None:
+        if panel == "found":
+            self._set_group_agent_active(self.found_group, True)
+            self.found_group_glow.setColor(QColor(78, 151, 229, 185))
+            self.found_group_pulse.stop()
+            self.found_group_pulse.start()
+            return
+        if panel == "deep":
+            self._set_group_agent_active(self.deep_group, True)
+            self.deep_group_glow.setColor(QColor(89, 196, 236, 190))
+            self.deep_group_pulse.stop()
+            self.deep_group_pulse.start()
+
+    def _stop_panel_pulse(self, panel: str) -> None:
+        if panel == "found":
+            self.found_group_pulse.stop()
+            self.found_group_glow.setBlurRadius(0.0)
+            self.found_group_glow.setColor(QColor(0, 0, 0, 0))
+            self._set_group_agent_active(self.found_group, False)
+            return
+        if panel == "deep":
+            self.deep_group_pulse.stop()
+            self.deep_group_glow.setBlurRadius(0.0)
+            self.deep_group_glow.setColor(QColor(0, 0, 0, 0))
+            self._set_group_agent_active(self.deep_group, False)
+
+    def _set_fast_running_ui(self, running: bool) -> None:
+        if running:
+            self.fast_run_btn.setText("⏳ поиск...")
+            self._start_panel_pulse("found")
+            self.status_label.setText("AI-агент анализирует найденные вакансии...")
+            return
+        self.fast_run_btn.setText("Запустить поиск")
+        self._stop_panel_pulse("found")
 
     def _deep_details_placeholder_html(self) -> str:
         return (
@@ -905,8 +1236,33 @@ class MainWindow(QMainWindow):
         )
 
     def _append_log(self, message: str) -> None:
-        self.log_text.appendPlainText(message)
-        self.ctx.logger.info(message)
+        if not message:
+            return
+        text = message if message.endswith("\n") else f"{message}\n"
+        self.log_char_queue.append(text)
+        if not self.log_char_timer.isActive():
+            self.log_char_timer.start()
+        self.ctx.logger.info(message.rstrip("\n"))
+
+    def _flush_log_char(self) -> None:
+        if not self.log_active_line:
+            if not self.log_char_queue:
+                self.log_char_timer.stop()
+                return
+            self.log_active_line = self.log_char_queue.popleft()
+            self.log_active_pos = 0
+
+        if self.log_active_pos >= len(self.log_active_line):
+            self.log_active_line = ""
+            self.log_active_pos = 0
+            return
+
+        scrollbar = self.log_text.verticalScrollBar()
+        stick_to_bottom = scrollbar.value() >= scrollbar.maximum() - 2
+        self.log_text.insertPlainText(self.log_active_line[self.log_active_pos])
+        self.log_active_pos += 1
+        if stick_to_bottom:
+            scrollbar.setValue(scrollbar.maximum())
 
     def _load_hidden_state(self) -> None:
         self.hidden_vacancy_ids = set()
@@ -1481,6 +1837,17 @@ class MainWindow(QMainWindow):
         lines = [line.strip() for line in stripped.splitlines() if line.strip()]
         return any(line.endswith("...") or line.endswith("…") for line in lines)
 
+    def _render_salary_value_html(self, salary_raw: str | None) -> str:
+        salary = (salary_raw or "не указана").strip()
+        escaped = html.escape(salary)
+        if re.search(r"\d", salary):
+            return (
+                "<span style='color:#FF5A5A; font-size:18px; font-weight:800;'>"
+                f"{escaped}"
+                "</span>"
+            )
+        return escaped
+
     def _build_summary_html(self, vacancy: Vacancy | None) -> str:
         if vacancy is None:
             return "Данные по вакансии пока не загружены."
@@ -1506,7 +1873,7 @@ class MainWindow(QMainWindow):
         return (
             f"<b>Вакансия:</b> {html.escape(vacancy.title)}<br>"
             f"<b>Компания:</b> {company_html}<br>"
-            f"<b>ЗП:</b> {html.escape(vacancy.salary_raw or 'не указана')}<br>"
+            f"<b>ЗП:</b> {self._render_salary_value_html(vacancy.salary_raw)}<br>"
             f"<b>Локация:</b> {html.escape(vacancy.area or 'не указана')}<br>"
             f"<b>Ссылка:</b> {link_html}<br><br>"
             f"<b>Описание:</b><br>{description_text}"
@@ -1555,7 +1922,7 @@ class MainWindow(QMainWindow):
                 f"<b>Вакансия:</b> {html.escape(vacancy.title)}<br>",
                 f"<b>Компания:</b> {html.escape(vacancy.company)}<br>",
                 f"<b>Ссылка:</b> {link_html}<br>",
-                f"<b>Зарплата:</b> {html.escape(vacancy.salary_raw or 'не указана')}<br>",
+                f"<b>Зарплата:</b> {self._render_salary_value_html(vacancy.salary_raw)}<br>",
                 f"<b>Формат:</b> {html.escape(vacancy.area or 'не указано')}<br>",
                 "<br><b>Полный текст вакансии с hh.ru:</b> ",
                 f"{self._format_deep_full_text_html(full_text)}<br><br>",
@@ -1566,7 +1933,6 @@ class MainWindow(QMainWindow):
     def _show_summary_context(self, vacancy_id: str) -> None:
         vacancy = self._get_vacancy(vacancy_id)
         self.summary_text.setHtml(self._build_summary_html(vacancy))
-        self.details_text.setHtml(self._deep_details_placeholder_html())
 
     def _show_deep_context(self, vacancy_id: str) -> None:
         vacancy = self._get_vacancy(vacancy_id)
@@ -1699,6 +2065,10 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             if mode == "deep":
                 self._set_deep_running_ui(False)
+            if mode == "fast":
+                self._set_fast_running_ui(False)
+            self.progress_mode = "idle"
+            self._set_agent_progress(0, "Ошибка в настройках запуска.")
             QMessageBox.critical(self, "Ошибка настроек", str(exc))
             return
 
@@ -1706,8 +2076,16 @@ class MainWindow(QMainWindow):
         if mode != "fast":
             self.partial_refresh_timer.stop()
             self.active_run_id = None
+        self._start_progress_tracking(mode, deep_target_ids)
+        if mode == "fast":
+            self._set_fast_running_ui(True)
         self._set_busy(True)
-        self.status_label.setText(f"Выполняется {mode}-запуск...")
+        if mode == "fast":
+            self.status_label.setText("AI-агент сканирует выдачу hh.ru...")
+        elif mode == "deep":
+            self.status_label.setText("AI-агент выполняет deep-dive...")
+        else:
+            self.status_label.setText(f"Выполняется {mode}-запуск...")
         self._append_log(
             f"Run started: mode={mode}, pages={self.ctx.settings.search.max_pages}, "
             "max_age_days="
@@ -1731,9 +2109,17 @@ class MainWindow(QMainWindow):
     def _on_run_done(self, result: object) -> None:
         self.partial_refresh_timer.stop()
         self.active_run_id = None
+        if self.last_run_mode == "fast":
+            self._set_fast_running_ui(False)
         if not isinstance(result, RunResult):
             self._append_log("Unexpected run result type.")
             self._set_deep_running_ui(False)
+            self.progress_mode = "idle"
+            self.progress_seen_units.clear()
+            self._set_agent_progress(
+                self.agent_progress.value(),
+                "Неожиданный результат выполнения.",
+            )
             return
 
         run_result = result
@@ -1780,10 +2166,19 @@ class MainWindow(QMainWindow):
             f"Run completed: run_id={run_result.run_id}, html={run_result.html_report_path}, "
             f"errors={len(run_result.stats.errors)}"
         )
+        if self.last_run_mode == "deep":
+            done_count = sum(1 for item in self.deep_queue if item.status == "done")
+            self._complete_progress_tracking(f"deep-dive завершен: {done_count} обработано")
+        else:
+            self._complete_progress_tracking(
+                f"Поиск завершен: найдено {len(run_result.seen_rows)} вакансий"
+            )
 
     def _on_worker_error(self, message: str) -> None:
         self.partial_refresh_timer.stop()
         self.active_run_id = None
+        if self.last_run_mode == "fast":
+            self._set_fast_running_ui(False)
         if self.last_run_mode == "deep" and self.active_deep_target_ids:
             for item in self.deep_queue:
                 if item.vacancy_id in self.active_deep_target_ids:
@@ -1802,6 +2197,9 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Ошибка выполнения.")
             QMessageBox.critical(self, "Ошибка", message.splitlines()[0])
         self._append_log(message)
+        self.progress_mode = "idle"
+        self.progress_seen_units.clear()
+        self._set_agent_progress(self.agent_progress.value(), "Ошибка. Проверьте логи ниже.")
 
     def on_preview_clicked(self) -> None:
         report_path = self.ctx.project_root / self.ctx.settings.paths.reports_dir / "latest.html"
@@ -1861,14 +2259,7 @@ def build_context(project_root: Path) -> AppContext:
 
 
 def main() -> int:
-    if getattr(sys, "frozen", False):
-        default_root = Path.home() / "HHLook"
-        override_root = os.environ.get("HHLOOK_HOME", "").strip()
-        project_root = Path(override_root).expanduser() if override_root else default_root
-    else:
-        project_root = Path.cwd()
-
-    project_root.mkdir(parents=True, exist_ok=True)
+    project_root = Path.cwd()
     ctx = build_context(project_root)
 
     app = QApplication(sys.argv)

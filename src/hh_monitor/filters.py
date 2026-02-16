@@ -140,20 +140,23 @@ def filter_vacancy(
     min_salary: int | None,
     include_description: bool,
 ) -> tuple[bool, str]:
-    fields: dict[str, str] = {
+    include_fields: dict[str, str] = {
+        "title": vacancy.title,
+    }
+    exclude_fields: dict[str, str] = {
         "title": vacancy.title,
         "company": vacancy.company,
         "snippet": vacancy.snippet,
     }
     if include_description:
-        fields["description"] = vacancy.description
+        exclude_fields["description"] = vacancy.description
 
     include_hits: list[str] = []
     exclude_hits: list[str] = []
 
     if include_keywords:
         for keyword in include_keywords:
-            for field_name, value in fields.items():
+            for field_name, value in include_fields.items():
                 if value and _contains_keyword(value, keyword):
                     include_hits.append(f'include:{field_name}("{keyword}")')
                     break
@@ -161,7 +164,7 @@ def filter_vacancy(
             return False, "include:not_matched"
 
     for keyword in exclude_keywords:
-        for field_name, value in fields.items():
+        for field_name, value in exclude_fields.items():
             if value and _contains_keyword(value, keyword):
                 exclude_hits.append(f'exclude:{field_name}("{keyword}")')
                 break

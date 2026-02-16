@@ -61,7 +61,7 @@ def test_filter_vacancy_matches_russian_inflections() -> None:
         include_description=False,
     )
     assert matched is True
-    assert "include:title" in reason or "include:snippet" in reason
+    assert "include:title" in reason
 
 
 def test_filter_vacancy_matches_english_inflections() -> None:

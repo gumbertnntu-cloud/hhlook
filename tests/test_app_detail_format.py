@@ -26,3 +26,26 @@ def test_format_deep_full_text_html_renders_bold_and_joins_split_commas() -> Non
         "<span style='font-weight:700; color:#F0F0F3;'>Операционного</span>"
     )
     assert expected in rendered
+
+
+def test_compose_query_text_does_not_inject_blockers_into_hh_query() -> None:
+    query = MainWindow._compose_query_text(
+        None,
+        positions=["генеральный директор", "CEO"],
+        blockers=["секретарь", "assistant"],
+    )
+
+    assert query == '("генеральный директор") OR CEO'
+
+
+def test_render_salary_value_html_highlights_numeric_salary() -> None:
+    rendered = MainWindow._render_salary_value_html(None, "от 300 000 ₽")
+    assert "color:#FF5A5A" in rendered
+    assert "font-size:18px" in rendered
+    assert "300 000" in rendered
+
+
+def test_render_salary_value_html_keeps_plain_for_non_numeric_salary() -> None:
+    rendered = MainWindow._render_salary_value_html(None, "не указана")
+    assert "color:#FF5A5A" not in rendered
+    assert rendered == "не указана"
