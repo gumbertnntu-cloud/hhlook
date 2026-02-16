@@ -1,0 +1,22 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+*.spec
+tmp/
+
+# local runtime data
+data/*.db
+state/state.json
+logs/*.log
+reports/*.html
+exports/*.xlsx
+
+# env
+.env
