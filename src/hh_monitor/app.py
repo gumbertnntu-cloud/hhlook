@@ -44,13 +44,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .auth import interactive_auth, validate_state
-from .export_xlsx import export_ui_tables_xlsx
-from .logging_conf import configure_logging
-from .models import ChangeRow, SeenVacancyRow, Vacancy
-from .runner import RunResult, run_pipeline
-from .settings import AppSettings, load_settings, save_settings
-from .storage import get_run_seen_rows, get_vacancy_by_id
+try:
+    from .auth import interactive_auth, validate_state
+    from .export_xlsx import export_ui_tables_xlsx
+    from .logging_conf import configure_logging
+    from .models import ChangeRow, SeenVacancyRow, Vacancy
+    from .runner import RunResult, run_pipeline
+    from .settings import AppSettings, load_settings, save_settings
+    from .storage import get_run_seen_rows, get_vacancy_by_id
+except ImportError:
+    # Fallback for frozen/script entrypoints that import this file as top-level.
+    from hh_monitor.auth import interactive_auth, validate_state
+    from hh_monitor.export_xlsx import export_ui_tables_xlsx
+    from hh_monitor.logging_conf import configure_logging
+    from hh_monitor.models import ChangeRow, SeenVacancyRow, Vacancy
+    from hh_monitor.runner import RunResult, run_pipeline
+    from hh_monitor.settings import AppSettings, load_settings, save_settings
+    from hh_monitor.storage import get_run_seen_rows, get_vacancy_by_id
 
 HELP_TEXT = """HH Monitor — короткая инструкция
 

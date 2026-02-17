@@ -135,6 +135,17 @@ git push origin v0.1.0
 ./scripts/build_windows_exe.ps1
 ```
 
+Или через `cmd`:
+```cmd
+scripts\build_windows_exe.bat
+```
+
+Если при запуске старого `.exe` видите ошибку  
+`attempted relative import with no known parent package`:
+1. Удалите старый `dist\HHLook.exe`.
+2. Пересоберите через `scripts\build_windows_exe.bat`.
+3. Запускайте только новый `dist\HHLook.exe`.
+
 ## Качество
 ```bash
 ruff check src tests

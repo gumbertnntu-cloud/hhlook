@@ -1,4 +1,10 @@
 $ErrorActionPreference = 'Stop'
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Entry = Join-Path $ScriptDir "windows_entry.py"
+
+if (!(Test-Path $Entry)) {
+  throw "Entry file not found: $Entry"
+}
 
 Write-Host "[build] Python version"
 python --version
@@ -27,7 +33,7 @@ pyinstaller `
   --collect-all pydantic_core `
   --collect-all bs4 `
   --collect-all lxml `
-  src/hh_monitor/app.py
+  "$Entry"
 
 if (!(Test-Path "dist/HHLook.exe")) {
   throw "dist/HHLook.exe not found"
