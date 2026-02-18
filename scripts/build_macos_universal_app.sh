@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="${ROOT_DIR}/scripts"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_ARCH="${PYTHON_ARCH:-}"
 APP_NAME="${APP_NAME:-HHLook}"
 ENTRY_FILE="${SCRIPT_DIR}/windows_entry.py"
 DIST_DIR="${ROOT_DIR}/dist"
@@ -15,15 +16,23 @@ if [[ ! -f "${ENTRY_FILE}" ]]; then
   exit 1
 fi
 
+run_python() {
+  if [[ -n "${PYTHON_ARCH}" ]]; then
+    /usr/bin/arch "-${PYTHON_ARCH}" "${PYTHON_BIN}" "$@"
+  else
+    "${PYTHON_BIN}" "$@"
+  fi
+}
+
 echo "[build] python: ${PYTHON_BIN}"
-"${PYTHON_BIN}" --version
+run_python --version
 
 echo "[build] upgrade pip + install build deps"
-"${PYTHON_BIN}" -m pip install --upgrade pip
-"${PYTHON_BIN}" -m pip install -r "${ROOT_DIR}/requirements.txt" pyinstaller
+run_python -m pip install --upgrade pip
+run_python -m pip install -r "${ROOT_DIR}/requirements.txt" pyinstaller
 
 echo "[build] pyinstaller app (${ARCH_LABEL})"
-"${PYTHON_BIN}" -m PyInstaller \
+run_python -m PyInstaller \
   --noconfirm \
   --clean \
   --windowed \

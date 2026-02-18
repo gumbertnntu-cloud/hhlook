@@ -17,9 +17,13 @@ jobs:
         include:
           - os: macos-14
             python_arch: x64
+            python_exec_arch: x86_64
+            expected_arch: x86_64
             arch_label: intel
           - os: macos-14
             python_arch: arm64
+            python_exec_arch: ""
+            expected_arch: arm64
             arch_label: apple-silicon
     runs-on: ${{ matrix.os }}
 
@@ -33,8 +37,16 @@ jobs:
           python-version: "3.11"
           architecture: ${{ matrix.python_arch }}
 
+      - name: Ensure Rosetta (intel build only)
+        if: matrix.arch_label == 'intel'
+        shell: bash
+        run: |
+          sudo /usr/sbin/softwareupdate --install-rosetta --agree-to-license || true
+
       - name: Build HHLook app (${{ matrix.arch_label }})
         shell: bash
+        env:
+          PYTHON_ARCH: ${{ matrix.python_exec_arch }}
         run: |
           chmod +x ./scripts/build_macos_universal_app.sh
           ./scripts/build_macos_universal_app.sh "${{ matrix.arch_label }}"
@@ -45,7 +57,9 @@ jobs:
           APP_BIN="dist/HHLook-${{ matrix.arch_label }}.app/Contents/MacOS/HHLook"
           test -f "${APP_BIN}"
           file "${APP_BIN}"
-          lipo -archs "${APP_BIN}"
+          ARCHES="$(lipo -archs "${APP_BIN}")"
+          echo "${ARCHES}"
+          [[ "${ARCHES}" == *"${{ matrix.expected_arch }}"* ]]
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
