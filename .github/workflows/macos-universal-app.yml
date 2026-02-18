@@ -1,4 +1,4 @@
-name: Build macOS Universal App
+name: Build macOS Apps
 
 on:
   workflow_dispatch:
@@ -10,8 +10,16 @@ permissions:
   contents: write
 
 jobs:
-  build-macos-universal:
-    runs-on: macos-14
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            arch_label: intel
+          - os: macos-14
+            arch_label: apple-silicon
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -22,16 +30,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build HHLook universal app
+      - name: Build HHLook app (${{ matrix.arch_label }})
         shell: bash
         run: |
           chmod +x ./scripts/build_macos_universal_app.sh
-          ./scripts/build_macos_universal_app.sh
+          ./scripts/build_macos_universal_app.sh "${{ matrix.arch_label }}"
 
-      - name: Verify app binary architectures
+      - name: Verify app binary architecture
         shell: bash
         run: |
-          APP_BIN="dist/HHLook.app/Contents/MacOS/HHLook"
+          APP_BIN="dist/HHLook-${{ matrix.arch_label }}.app/Contents/MacOS/HHLook"
           test -f "${APP_BIN}"
           file "${APP_BIN}"
           lipo -archs "${APP_BIN}"
@@ -39,17 +47,16 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: HHLook-macos-universal
+          name: HHLook-macos-${{ matrix.arch_label }}
           path: |
-            dist/HHLook.app
-            dist/HHLook-macOS-universal.zip
-            dist/HHLook-macOS-universal.dmg
+            dist/HHLook-${{ matrix.arch_label }}.app
+            dist/HHLook-macOS-${{ matrix.arch_label }}.zip
+            dist/HHLook-macOS-${{ matrix.arch_label }}.dmg
 
       - name: Attach macOS assets to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/HHLook-macOS-universal.zip
-            dist/HHLook-macOS-universal.dmg
-          generate_release_notes: true
+            dist/HHLook-macOS-${{ matrix.arch_label }}.zip
+            dist/HHLook-macOS-${{ matrix.arch_label }}.dmg

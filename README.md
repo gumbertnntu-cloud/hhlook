@@ -1,6 +1,6 @@
 # hhlook (MVP v3)
 
-Локальное desktop-приложение для macOS (Apple Silicon) для мониторинга и парсинга вакансий hh.ru без официального API.
+Локальное desktop-приложение для macOS (Intel и Apple Silicon) для мониторинга и парсинга вакансий hh.ru без официального API.
 
 ## Что умеет MVP
 - GUI на `PySide6` (`./app`) для настройки и запуска.
@@ -29,7 +29,7 @@
 - Внутренний service mode для `launchd` (`./service-run`).
 
 ## Требования
-- macOS (Apple Silicon)
+- macOS (Intel или Apple Silicon)
 - Python `3.11+`
 - Chromium for Playwright
 
@@ -115,21 +115,23 @@ launchctl load ~/Library/LaunchAgents/com.user.hhmonitor.plist
 ./scripts/rebuild_macos_app.sh /absolute/path/to/icon.png
 ```
 
-## macOS Universal App (Intel + Apple Silicon) через GitHub Releases
+## macOS App (2 сборки: Intel и Apple Silicon) через GitHub Releases
 В репозитории настроен workflow:
 - `.github/workflows/macos-universal-app.yml`
 - сборочный скрипт: `scripts/build_macos_universal_app.sh`
 
 Что публикуется в релизе:
-- `HHLook-macOS-universal.zip`
-- `HHLook-macOS-universal.dmg`
+- `HHLook-macOS-intel.zip` + `HHLook-macOS-intel.dmg`
+- `HHLook-macOS-apple-silicon.zip` + `HHLook-macOS-apple-silicon.dmg`
 
-Это один `.app` (universal2), который запускается и на Intel Mac, и на Apple Silicon.
+Выберите архив под ваш процессор Mac.
 
 Локальная сборка на macOS:
 ```bash
 chmod +x scripts/build_macos_universal_app.sh
-./scripts/build_macos_universal_app.sh
+./scripts/build_macos_universal_app.sh intel
+# или
+./scripts/build_macos_universal_app.sh apple-silicon
 ```
 
 Если macOS показывает предупреждение безопасности на неподписанном приложении:

@@ -7,7 +7,8 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 APP_NAME="${APP_NAME:-HHLook}"
 ENTRY_FILE="${SCRIPT_DIR}/windows_entry.py"
 DIST_DIR="${ROOT_DIR}/dist"
-STAGE_DIR="${ROOT_DIR}/tmp/macos_dmg_stage"
+ARCH_LABEL="${1:-native}"
+APP_STAGE_DIR="${ROOT_DIR}/tmp/macos_${ARCH_LABEL}_stage"
 
 if [[ ! -f "${ENTRY_FILE}" ]]; then
   echo "Entry file not found: ${ENTRY_FILE}" >&2
@@ -25,7 +26,7 @@ echo "[build] install playwright chromium into package-local cache"
 export PLAYWRIGHT_BROWSERS_PATH=0
 "${PYTHON_BIN}" -m playwright install chromium
 
-echo "[build] pyinstaller universal2 app"
+echo "[build] pyinstaller app (${ARCH_LABEL})"
 "${PYTHON_BIN}" -m PyInstaller \
   --noconfirm \
   --clean \
@@ -37,7 +38,6 @@ echo "[build] pyinstaller universal2 app"
   --collect-all pydantic_core \
   --collect-all bs4 \
   --collect-all lxml \
-  --target-arch universal2 \
   "${ENTRY_FILE}"
 
 APP_PATH="${DIST_DIR}/${APP_NAME}.app"
@@ -52,22 +52,26 @@ if [[ -f "${APP_BIN}" ]]; then
   lipo -archs "${APP_BIN}"
 fi
 
-ZIP_OUT="${DIST_DIR}/${APP_NAME}-macOS-universal.zip"
-DMG_OUT="${DIST_DIR}/${APP_NAME}-macOS-universal.dmg"
+ARCH_APP_PATH="${DIST_DIR}/${APP_NAME}-${ARCH_LABEL}.app"
+ZIP_OUT="${DIST_DIR}/${APP_NAME}-macOS-${ARCH_LABEL}.zip"
+DMG_OUT="${DIST_DIR}/${APP_NAME}-macOS-${ARCH_LABEL}.dmg"
+
+rm -rf "${ARCH_APP_PATH}"
+cp -R "${APP_PATH}" "${ARCH_APP_PATH}"
 
 echo "[build] pack zip"
 rm -f "${ZIP_OUT}"
-ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${ZIP_OUT}"
+ditto -c -k --sequesterRsrc --keepParent "${ARCH_APP_PATH}" "${ZIP_OUT}"
 
 echo "[build] pack dmg"
 rm -f "${DMG_OUT}"
-rm -rf "${STAGE_DIR}"
-mkdir -p "${STAGE_DIR}"
-cp -R "${APP_PATH}" "${STAGE_DIR}/"
-hdiutil create -volname "${APP_NAME}" -srcfolder "${STAGE_DIR}" -ov -format UDZO "${DMG_OUT}" >/dev/null
-rm -rf "${STAGE_DIR}"
+rm -rf "${APP_STAGE_DIR}"
+mkdir -p "${APP_STAGE_DIR}"
+cp -R "${ARCH_APP_PATH}" "${APP_STAGE_DIR}/"
+hdiutil create -volname "${APP_NAME}-${ARCH_LABEL}" -srcfolder "${APP_STAGE_DIR}" -ov -format UDZO "${DMG_OUT}" >/dev/null
+rm -rf "${APP_STAGE_DIR}"
 
 echo "[build] done"
-echo "  app: ${APP_PATH}"
+echo "  app: ${ARCH_APP_PATH}"
 echo "  zip: ${ZIP_OUT}"
 echo "  dmg: ${DMG_OUT}"
