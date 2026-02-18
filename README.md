@@ -115,6 +115,28 @@ launchctl load ~/Library/LaunchAgents/com.user.hhmonitor.plist
 ./scripts/rebuild_macos_app.sh /absolute/path/to/icon.png
 ```
 
+## macOS Universal App (Intel + Apple Silicon) через GitHub Releases
+В репозитории настроен workflow:
+- `.github/workflows/macos-universal-app.yml`
+- сборочный скрипт: `scripts/build_macos_universal_app.sh`
+
+Что публикуется в релизе:
+- `HHLook-macOS-universal.zip`
+- `HHLook-macOS-universal.dmg`
+
+Это один `.app` (universal2), который запускается и на Intel Mac, и на Apple Silicon.
+
+Локальная сборка на macOS:
+```bash
+chmod +x scripts/build_macos_universal_app.sh
+./scripts/build_macos_universal_app.sh
+```
+
+Если macOS показывает предупреждение безопасности на неподписанном приложении:
+```bash
+xattr -dr com.apple.quarantine "/path/to/HHLook.app"
+```
+
 ## Windows: one-file EXE через GitHub Releases
 В репозитории настроен workflow:
 - `.github/workflows/windows-exe.yml`
