@@ -125,6 +125,7 @@ launchctl load ~/Library/LaunchAgents/com.user.hhmonitor.plist
 - `HHLook-macOS-apple-silicon.zip` + `HHLook-macOS-apple-silicon.dmg`
 
 Выберите архив под ваш процессор Mac.
+При первом запуске приложение автоматически установит Chromium для Playwright.
 
 Локальная сборка на macOS:
 ```bash

@@ -13,6 +13,7 @@ from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from .browser_setup import ensure_chromium_installed
 from .models import Vacancy
 from .parser import parse_search_results, parse_vacancy_detail
 from .utils import random_delay
@@ -104,6 +105,7 @@ def crawl_vacancies(
     items: list[Vacancy] = []
     now = datetime.now()
 
+    ensure_chromium_installed(logger)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(storage_state=str(state_path))
@@ -207,6 +209,7 @@ def crawl_vacancy_details(
     stats.cards_after_date_filter = len(vacancies)
     updated: list[Vacancy] = []
 
+    ensure_chromium_installed(logger)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(storage_state=str(state_path))

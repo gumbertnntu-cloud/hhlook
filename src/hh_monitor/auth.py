@@ -7,6 +7,8 @@ from pathlib import Path
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from .browser_setup import ensure_chromium_installed
+
 LOGIN_SELECTORS = [
     'a[data-qa="login"]',
     'a[href*="/account/login"]',
@@ -26,6 +28,7 @@ def validate_state(base_url: str, state_path: Path, logger: logging.Logger) -> b
         return False
 
     try:
+        ensure_chromium_installed(logger)
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(storage_state=str(state_path))
@@ -59,6 +62,7 @@ def interactive_auth(base_url: str, state_path: Path, logger: logging.Logger) ->
     start = time.monotonic()
 
     logger.info("starting interactive auth flow")
+    ensure_chromium_installed(logger)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()

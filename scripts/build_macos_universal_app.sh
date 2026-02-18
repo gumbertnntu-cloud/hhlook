@@ -22,10 +22,6 @@ echo "[build] upgrade pip + install build deps"
 "${PYTHON_BIN}" -m pip install --upgrade pip
 "${PYTHON_BIN}" -m pip install -r "${ROOT_DIR}/requirements.txt" pyinstaller
 
-echo "[build] install playwright chromium into package-local cache"
-export PLAYWRIGHT_BROWSERS_PATH=0
-"${PYTHON_BIN}" -m playwright install chromium
-
 echo "[build] pyinstaller app (${ARCH_LABEL})"
 "${PYTHON_BIN}" -m PyInstaller \
   --noconfirm \

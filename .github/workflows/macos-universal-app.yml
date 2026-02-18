@@ -15,9 +15,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13
+          - os: macos-14
+            python_arch: x64
             arch_label: intel
           - os: macos-14
+            python_arch: arm64
             arch_label: apple-silicon
     runs-on: ${{ matrix.os }}
 
@@ -29,6 +31,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          architecture: ${{ matrix.python_arch }}
 
       - name: Build HHLook app (${{ matrix.arch_label }})
         shell: bash
